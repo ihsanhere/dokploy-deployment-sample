@@ -1,6 +1,3 @@
-# To use this Dockerfile, you have to set `output: 'standalone'` in your next.config.js file.
-# From https://github.com/vercel/next.js/blob/canary/examples/with-docker/Dockerfile
-
 FROM node:22.12.0-alpine AS base
 
 # Install dependencies only when needed
@@ -11,16 +8,24 @@ WORKDIR /app
 
 # Install dependencies based on the preferred package manager
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* ./
-RUN \
-  if [ -f yarn.lock ]; then yarn --frozen-lockfile; \
-  elif [ -f package-lock.json ]; then npm ci; \
-  elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm i --frozen-lockfile; \
-  else echo "Lockfile not found." && exit 1; \
-  fi
-
+RUN npm i -g pnpm
+RUN pnpm i --frozen-lockfile
 
 # Rebuild the source code only when needed
 FROM base AS builder
+
+ARG PAYLOAD_SECRET
+ARG DATABASE_URI
+ARG NEXT_PUBLIC_SERVER_URL
+ARG CRON_SECRET
+ARG PREVIEW_SECRET
+
+ENV PAYLOAD_SECRET=$PAYLOAD_SECRET
+ENV DATABASE_URI=$DATABASE_URI
+ENV NEXT_PUBLIC_SERVER_URL=$NEXT_PUBLIC_SERVER_URL
+ENV CRON_SECRET=$CRON_SECRET
+ENV PREVIEW_SECRET=$PREVIEW_SECRET
+
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -30,20 +35,32 @@ COPY . .
 # Uncomment the following line in case you want to disable telemetry during the build.
 # ENV NEXT_TELEMETRY_DISABLED 1
 
-RUN \
-  if [ -f yarn.lock ]; then yarn run build; \
-  elif [ -f package-lock.json ]; then npm run build; \
-  elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm run build; \
-  else echo "Lockfile not found." && exit 1; \
-  fi
+RUN npm i -g pnpm
+RUN pnpm run generate:types
+RUN pnpm run generate:importmap
+RUN pnpm run build
 
 # Production image, copy all the files and run next
 FROM base AS runner
 WORKDIR /app
 
 ENV NODE_ENV production
+
+# Important: Pass environment variables to the runner stage
+ARG PAYLOAD_SECRET
+ARG DATABASE_URI
+ARG NEXT_PUBLIC_SERVER_URL
+ARG CRON_SECRET
+ARG PREVIEW_SECRET
+
+ENV PAYLOAD_SECRET=$PAYLOAD_SECRET
+ENV DATABASE_URI=$DATABASE_URI
+ENV NEXT_PUBLIC_SERVER_URL=$NEXT_PUBLIC_SERVER_URL
+ENV CRON_SECRET=$CRON_SECRET
+ENV PREVIEW_SECRET=$PREVIEW_SECRET
+
 # Uncomment the following line in case you want to disable telemetry during runtime.
-# ENV NEXT_TELEMETRY_DISABLED 1
+ENV NEXT_TELEMETRY_DISABLED 1
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
@@ -59,6 +76,7 @@ RUN chown nextjs:nodejs .next
 # https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/next.config.mjs ./
 
 USER nextjs
 
