@@ -53,4 +53,4 @@ EXPOSE 3000
 ENV PORT 3000
 
 # Start the application
-CMD HOSTNAME="0.0.0.0" node server.js
+CMD pnpm run start
